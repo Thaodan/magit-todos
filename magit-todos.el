@@ -5,7 +5,7 @@
 ;; Author: Adam Porter <adam@alphapapa.net>
 ;; URL: http://github.com/alphapapa/magit-todos
 ;; Version: 1.9-pre
-;; Package-Requires: ((emacs "26.1") (async "1.9.2") (dash "2.13.0") (f "0.17.2") (hl-todo "1.9.0") (magit "2.13.0") (pcre2el "1.8") (s "1.12.0") (transient "0.2.0"))
+;; Package-Requires: ((emacs "26.1") (async "1.9.2") (dash "2.13.0") (f "0.17.2") (hl-todo "1.9.0") (magit "2.13.0") (pcre2el "1.8") (transient "0.2.0"))
 ;; Keywords: magit, vc
 
 ;;; Commentary:
@@ -38,7 +38,6 @@
 ;; hl-todo
 ;; magit
 ;; pcre2el
-;; s
 
 ;; Then put this file in your load-path, and put this in your init file:
 
@@ -74,7 +73,6 @@
 (require 'magit)
 (require 'transient)
 (require 'pcre2el)
-(require 's)
 
 ;;;; Structs
 
@@ -867,7 +865,7 @@ sections."
   ;; NOTE: `magit-insert-section' seems to bind `magit-section-visibility-cache' to nil, so setting
   ;; visibility within calls to it probably won't work as intended.
   (declare (indent defun))
-  (let* ((indent (propertize (s-repeat (* 2 depth) " ") 'face nil 'font-lock-face nil))
+  (let* ((indent (propertize (string-pad "" (* 2 depth)) 'face nil 'font-lock-face nil))
          (heading (concat indent heading))
          (magit-insert-section--parent (if (= 0 depth)
                                            magit-root-section
@@ -893,7 +891,7 @@ sections."
                                                       ;; shouldn't cause any problems, it just won't
                                                       ;; look as pretty.
                                                       ((or "" ":" 'nil) "[Other]")
-                                                      (_ (s-chop-suffix ":" group-type)))
+                                                      (_ (string-remove-suffix ":" group-type)))
                                    do (magit-todos--insert-groups
                                         :depth (1+ depth) :group-fns (cdr group-fns)
                                         :type (intern group-name) :items items
@@ -934,7 +932,7 @@ sections."
   ;; NOTE: `magit-insert-section' seems to bind `magit-section-visibility-cache' to nil, so setting
   ;; visibility within calls to it probably won't work as intended.
   (declare (indent defun))
-  (let* ((indent (propertize (s-repeat (* 2 depth) " ") 'face nil 'font-lock-face nil))
+  (let* ((indent (propertize (string-pad nil (* 2 depth)) 'face nil 'font-lock-face nil))
          (magit-insert-section--parent (if (= 0 depth)
                                            magit-root-section
                                          magit-insert-section--parent))
@@ -950,7 +948,7 @@ sections."
                                                     (when magit-todos-filename-filter
                                                       (setf filename (funcall magit-todos-filename-filter filename)))
                                                     (concat filename " "))
-                                                  (funcall (if (s-suffix? ".org" filename)
+                                                  (funcall (if (string-prefix-p ".org" filename)
                                                                #'magit-todos--format-org
                                                              #'magit-todos--format-plain)
                                                            item))
@@ -1259,7 +1257,7 @@ It also adds the scanner to the customization variable
   (declare (indent defun) (debug (stringp [&rest &or [":test" def-form]
                                                  [":command" def-form]
                                                  [":results-regexp" [&or stringp def-form]]])))
-  (let* ((name-without-spaces (s-replace " " "-" name))
+  (let* ((name-without-spaces (string-replace " " "-" name))
          (scan-fn-name (concat "magit-todos--scan-with-" name-without-spaces))
          (scan-fn-symbol (intern scan-fn-name))
          (extra-args-var (intern (format "magit-todos-%s-extra-args" name-without-spaces))))
@@ -1289,7 +1287,7 @@ When SYNC is non-nil, match items are returned."
          (let* ((process-connection-type 'pipe)
                 (directory ,directory-form)
                 (extra-args (when ,extra-args-var
-                              (--map (s-split (rx (1+ space)) it 'omit-nulls)
+                              (--map (string-split (rx (1+ space)) it 'omit-nulls)
                                      ,extra-args-var)))
                 (keywords magit-todos-keywords-list)
                 (search-regexp-elisp (rx-to-string
@@ -1446,11 +1444,11 @@ When SYNC is non-nil, match items are returned."
                                         (unless grep-find-template
                                           (grep-compute-defaults))
                                         (->> grep-find-template
-                                             (s-replace " grep " " grep -b -E ")
-                                             (s-replace " -nH " " -H "))))
+                                             (string-replace " grep " " grep -b -E ")
+                                             (string-replace " -nH " " -H "))))
                   (_ (when depth
                        (setq grep-find-template
-                             (s-replace " <D> " (concat " <D> -maxdepth " (1+ depth) " ")
+                             (string-replace " <D> " (concat " <D> -maxdepth " (1+ depth) " ")
                                         grep-find-template)))))
              ;; Modified from `rgrep-default-command'
              (list "find" directory
@@ -1562,7 +1560,7 @@ the cache is not updated from this command."
   "Return ITEM as a (DISPLAY . ITEM) pair.
 Used for e.g. Helm and Ivy."
   (cons (concat (magit-todos-item-filename item) " "
-                (funcall (if (s-suffix? ".org" (magit-todos-item-filename item))
+                (funcall (if (string-suffix-p ".org" (magit-todos-item-filename item))
                              #'magit-todos--format-org
                            #'magit-todos--format-plain)
                          item))
