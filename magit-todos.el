@@ -5,7 +5,7 @@
 ;; Author: Adam Porter <adam@alphapapa.net>
 ;; URL: http://github.com/alphapapa/magit-todos
 ;; Version: 1.9-pre
-;; Package-Requires: ((emacs "26.1") (async "1.9.2") (dash "2.13.0") (f "0.17.2") (hl-todo "1.9.0") (magit "2.13.0") (pcre2el "1.8") (transient "0.2.0"))
+;; Package-Requires: ((emacs "26.1") (async "1.9.2") (f "0.17.2") (llama "20250120") (hl-todo "1.9.0") (magit "2.13.0") (pcre2el "1.8") (transient "0.2.0"))
 ;; Keywords: magit, vc
 
 ;;; Commentary:
@@ -33,8 +33,8 @@
 ;; Install these required packages:
 
 ;; async
-;; dash
 ;; f
+;; llama
 ;; hl-todo
 ;; magit
 ;; pcre2el
@@ -67,8 +67,8 @@
 (require 'seq)
 
 (require 'async)
-(require 'dash)
 (require 'f)
+(require 'llama)
 (require 'hl-todo)
 (require 'magit)
 (require 'transient)
@@ -552,7 +552,7 @@ or `bottom', which are handled specially."
                                       (find-section 'branch))))
                 ;; Add 1 to leave blank line after top sections.
                 (1+ (oref section end))))
-        ('bottom (oref (-last-item (oref magit-root-section children)) end))
+        ('bottom (oref (car (last (oref magit-root-section children))) end))
         (_ (when-let ((section (find-section condition)))
              (oref section end)))))))
 
@@ -561,10 +561,10 @@ or `bottom', which are handled specially."
 GROUPS should be an alist.  Assumes that each group contains
 unique items.  Intended for post-processing the result of
 `-group-by'."
-  (cl-loop with keys = (-uniq (-map #'car groups))
+  (cl-loop with keys = (seq-uniq (seq-map #'car groups))
            for key in keys
-           for matching-groups = (--select (equal key (car it)) groups)
-           collect (cons key (apply #'append (-map #'cdr matching-groups)))))
+           for matching-groups = (seq-filter (##equal key (car %)) groups)
+           collect (cons key (apply #'append (seq-map #'cdr matching-groups)))))
 
 (defun magit-todos--add-to-status-buffer-kill-hook ()
   "Add `magit-todos--kill-active-scan' to `kill-buffer-hook' locally."
@@ -610,8 +610,8 @@ buffer for RESULTS-REGEXP."
     (save-excursion
       (goto-char (point-min))
       (while (not (eobp))
-        (--when-let (magit-todos--line-item results-regexp)
-          (push it items))
+        (when-let* ((item (magit-todos--line-item results-regexp)))
+          (push item items))
         (forward-line 1)))
     (nreverse items)))
 
@@ -650,7 +650,7 @@ filenames to be excluded."
             items filename file-end hunk-end line-number)
         (while (next-diff)
           (while (setf filename (next-filename))
-            (unless (--some? (string-match it filename) glob-regexps)
+            (unless (seq-some (##string-match % filename) glob-regexps)
               (setf file-end (file-end))
               (while (setf line-number (next-hunk-line-number))
                 (setf hunk-end (hunk-end))
@@ -873,13 +873,14 @@ sections."
     (if (and (consp group-fns)
              (> (length group-fns) 0))
         ;; Insert more groups
-        (let* ((groups (--> (-group-by (car group-fns) items)
-                            (cl-loop for group in-ref it
-                                     ;; HACK: Set ":" keys to nil so they'll be grouped together.
-                                     do (pcase (car group)
-                                          (":" (setf (car group) nil)))
-                                     finally return it)
-                            (magit-todos--coalesce-groups it)))
+        (let* ((groups (let* ((group-fn (car group-fns))
+                              (it (seq-group-by group-fn items))
+                              (it (cl-loop for group in-ref it
+                                  ;; HACK: Set ":" keys to nil so they'll be grouped together.
+                                  do (pcase (car group)
+                                       (":" (setf (car group) nil)))
+                                  finally return it)))
+                         (magit-todos--coalesce-groups it)))
                (section (magit-insert-section ((eval type))
                           (magit-insert-heading heading)
                           (cl-loop for (group-type . items) in groups
@@ -893,19 +894,19 @@ sections."
                                                       ((or "" ":" 'nil) "[Other]")
                                                       (_ (string-remove-suffix ":" group-type)))
                                    do (magit-todos--insert-groups
-                                        :depth (1+ depth) :group-fns (cdr group-fns)
-                                        :type (intern group-name) :items items
-                                        :heading (concat
-                                                  (if (and magit-todos-fontify-keyword-headers
-                                                           (member group-name magit-todos-keywords-list))
-                                                      (let ((face (magit-todos--keyword-face group-name)))
-                                                        (propertize group-name 'face face 'font-lock-face face))
-                                                    group-name)
-                                                  ;; Item count
-                                                  (if (= 1 (length group-fns))
-                                                      ":" ; Let Magit add the count.
-                                                    ;; Add count ourselves.
-                                                    (concat " " (format "(%s)" (length items)))))))
+                                       :depth (1+ depth) :group-fns (cdr group-fns)
+                                       :type (intern group-name) :items items
+                                       :heading (concat
+                                                 (if (and magit-todos-fontify-keyword-headers
+                                                          (member group-name magit-todos-keywords-list))
+                                                     (let ((face (magit-todos--keyword-face group-name)))
+                                                     (propertize group-name 'face face 'font-lock-face face))
+                                                   group-name)
+                                                 ;; Item count
+                                                 (if (= 1 (length group-fns))
+                                                     ":" ; Let Magit add the count.
+                                                   ;; Add count ourselves.
+                                                   (concat " " (format "(%s)" (length items)))))))
                           (when (= 0 depth)
                             ;; Insert a blank line only in the body of the top-level section, so it
                             ;; will appear only when the section is expanded, matching other sections.
@@ -943,7 +944,7 @@ sections."
                       (let* ((filename (propertize (magit-todos-item-filename item)
                                                    'face 'magit-filename
                                                    'font-lock-face 'magit-filename))
-                             (string (--> (concat indent
+                             (string (let  ((it (concat indent
                                                   (when magit-todos-show-filenames
                                                     (when magit-todos-filename-filter
                                                       (setf filename (funcall magit-todos-filename-filter filename)))
@@ -951,7 +952,7 @@ sections."
                                                   (funcall (if (string-prefix-p ".org" filename)
                                                                #'magit-todos--format-org
                                                              #'magit-todos--format-plain)
-                                                           item))
+                                                           item))))
                                           (truncate-string-to-width it width))))
                         (magit-insert-section (todos-item item)
                           (insert string "\n")))))))
@@ -999,12 +1000,12 @@ advance to the next line."
                      (signal (car err) (cdr err)))))
       (make-magit-todos-item :filename (or filename
                                            (match-string 8))
-                             :line (--when-let (match-string 2)
-                                     (string-to-number it))
-                             :column (--when-let (match-string 3)
-                                       (string-to-number it))
-                             :position (--when-let (match-string 9)
-                                         (string-to-number it))
+                             :line (when-let* ((match (match-string 2)))
+                                     (string-to-number match))
+                             :column (when-let* ((match (match-string 3)))
+                                       (string-to-number match))
+                             :position (when-let* ((match (match-string 9)))
+                                         (string-to-number match))
                              :org-level (match-string 1)
                              :keyword (match-string 4)
                              :suffix (match-string 6)
@@ -1144,7 +1145,7 @@ if the process's buffer has already been deleted."
 (defun magit-todos--sort-by-keyword (a b)
   "Return non-nil if A's keyword is before B's in `magit-todos-keywords-list'."
   (cl-flet ((keyword-index (keyword)
-              (or (-elem-index keyword magit-todos-keywords-list) 0)))
+              (or (cl-position magit-todos-keywords-list keyword) 0)))
     (< (keyword-index (magit-todos-item-keyword a))
        (keyword-index (magit-todos-item-keyword b)))))
 
@@ -1287,7 +1288,7 @@ When SYNC is non-nil, match items are returned."
          (let* ((process-connection-type 'pipe)
                 (directory ,directory-form)
                 (extra-args (when ,extra-args-var
-                              (--map (string-split (rx (1+ space)) it 'omit-nulls)
+                              (seq-map (##string-split (rx (1+ space)) % 'omit-nulls)
                                      ,extra-args-var)))
                 (keywords magit-todos-keywords-list)
                 (search-regexp-elisp (rx-to-string
@@ -1325,7 +1326,7 @@ When SYNC is non-nil, match items are returned."
                                                  (optional (group-n 6 (regexp ,magit-todos-keyword-suffix)))
                                                  (optional (1+ blank))
                                                  (optional (group-n 5 (1+ not-newline)))))))))
-                (command (-flatten (-non-nil ,command))))
+                (command (flatten-list (seq-filter #'identity ,command))))
            ;; Convert any numbers in command to strings (e.g. depth).
            (cl-loop for elt in-ref command
                     when (numberp elt)
@@ -1387,10 +1388,10 @@ When SYNC is non-nil, match items are returned."
                  (when magit-todos-ignore-case
                    "--ignore-case")
                  (when magit-todos-exclude-globs
-                   (--map (list "--glob" (concat "!" it))
+                   (mapcar (##list "--glob" (concat "!" %))
                           magit-todos-exclude-globs))
                  (unless magit-todos-submodule-list
-                   (--map (list "--glob" (concat "!" it))
+                   (mapcar (##list "--glob" (concat "!" %))
                           (magit-list-module-paths)))
                  extra-args search-regexp-pcre directory))
 
@@ -1414,10 +1415,10 @@ When SYNC is non-nil, match items are returned."
                  "-e" search-regexp-pcre
                  extra-args "--" directory
                  (when magit-todos-exclude-globs
-                   (--map (concat ":!" it)
+                   (mapcar (##concat ":!" %)
                           magit-todos-exclude-globs))
                  (unless magit-todos-submodule-list
-                   (--map (list "--glob" (concat "!" it))
+                   (mapcar (##list "--glob" (concat "!" %))
                           (magit-list-module-paths)))))
 
 (magit-todos-defscanner "git diff"
@@ -1426,7 +1427,7 @@ When SYNC is non-nil, match items are returned."
   :command (progn
              ;; Silence byte-compiler warnings about these vars we don't use in this scanner.
              (ignore search-regexp-elisp search-regexp-pcre extra-args directory depth)
-             (let ((merge-base-ref (-> "git merge-base HEAD "
+             (let ((merge-base-ref (thread-first "git merge-base HEAD "
                                        (concat (or magit-todos-branch-list-merge-base-ref (magit-main-branch)))
                                        shell-command-to-string
                                        string-trim)))
@@ -1443,7 +1444,7 @@ When SYNC is non-nil, match items are returned."
   :command (let* ((grep-find-template (progn
                                         (unless grep-find-template
                                           (grep-compute-defaults))
-                                        (->> grep-find-template
+                                        (thread-last grep-find-template
                                              (string-replace " grep " " grep -b -E ")
                                              (string-replace " -nH " " -H "))))
                   (_ (when depth
@@ -1455,35 +1456,35 @@ When SYNC is non-nil, match items are returned."
                    (list (when grep-find-ignored-directories
                            (list "-type" "d"
                                  "(" "-path"
-                                 (-interpose (list "-o" "-path")
-                                             (-non-nil (--map (cond ((stringp it)
-                                                                     (concat "*/" it))
-                                                                    ((consp it)
-                                                                     (and (funcall (car it) it)
-                                                                          (concat "*/" (cdr it)))))
-                                                              grep-find-ignored-directories)))
+                                 (string-join (seq-filter (##cond ((stringp %)
+                                                                   (concat "*/" %))
+                                                                  ((consp %)
+                                                                   (and (funcall (car %) %)
+                                                                        (concat "*/" (cdr %)))))
+                                                          grep-find-ignored-directories)
+                                              (list "-o" "-path"))
                                  ")" "-prune"))
                          (when grep-find-ignored-files
                            (list "-o" "-type" "f"
                                  "(" "-name"
-                                 (-interpose (list "-o" "-name")
-                                             (--map (cond ((stringp it) it)
-                                                          ((consp it) (and (funcall (car it) it)
-                                                                           (cdr it))))
-                                                    grep-find-ignored-files))
+                                 (string-join (mapcar (##cond ((stringp %) %)
+                                                              ((consp %) (and (funcall (car %) %)
+                                                                              (cdr %))))
+                                                      grep-find-ignored-files)
+                                              (list "-o" "-name"))
                                  ")" "-prune"))
                          (when magit-todos-exclude-globs
                            (list "-o" "("
-                                 (-interpose (list "-o")
-                                             (--map (list "-iname"
+                                 (string-join (mapcar (##list "-iname"
                                                           ;; Arguments to "-iname" must not end in "/".
-                                                          (replace-regexp-in-string (rx "/" eos) "" it))
-                                                    magit-todos-exclude-globs))
+                                                          (replace-regexp-in-string (rx "/" eos) "" %))
+                                                      magit-todos-exclude-globs)
+                                              (list "-o"))
                                  ")" "-prune"))
                          (unless magit-todos-submodule-list
                            (when (magit-list-module-paths)
                              (list "-o" "("
-                                   (--map (list "-ipath" it)
+                                   (mapcar (##list "-ipath" %)
                                           (magit-list-module-paths))
                                    ")" "-prune"))))
                    (list "-o" "-type" "f")
