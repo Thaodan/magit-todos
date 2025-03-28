@@ -547,13 +547,13 @@ or `bottom', which are handled specially."
     (save-excursion
       (goto-char (point-min))
       (pcase condition
-        ('top (when-let ((section (or (find-section 'tags)
+        ('top (when-let* ((section (or (find-section 'tags)
                                       (find-section 'tag)
                                       (find-section 'branch))))
                 ;; Add 1 to leave blank line after top sections.
                 (1+ (oref section end))))
         ('bottom (oref (car (last (oref magit-root-section children))) end))
-        (_ (when-let ((section (find-section condition)))
+        (_ (when-let* ((section (find-section condition)))
              (oref section end)))))))
 
 (defun magit-todos--coalesce-groups (groups)
@@ -675,7 +675,7 @@ filenames to be excluded."
 See `magit-section-match'.  Also delete it from root section's children."
   (save-excursion
     (goto-char (point-min))
-    (when-let ((section (cl-loop until (magit-section-match condition)
+    (when-let* ((section (cl-loop until (magit-section-match condition)
                                  ;; Use `forward-line' instead of `magit-section-forward' because
                                  ;; sometimes it skips our section.
                                  do (forward-line 1)
