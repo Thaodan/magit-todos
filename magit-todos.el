@@ -110,10 +110,13 @@ This should be set automatically by customizing
 This should be set automatically by customizing
 `magit-todos-keywords'.")
 
-(defvar-local magit-todos-active-scan nil
+(defvar-local magit-todos-active-scan-process nil
   "The current scan's process.
 Used to avoid running multiple simultaneous scans for a
 `magit-status' buffer.")
+
+(defvar-local magit-todos-branched-todos-git-diff-process nil
+  "The current branched todo's scan process.")
 
 (defvar magit-todos-section-map
   (let ((map (make-sparse-keymap)))
@@ -570,15 +573,21 @@ unique items.  Intended for post-processing the result of
   "Add `magit-todos--kill-active-scan' to `kill-buffer-hook' locally."
   (add-hook 'kill-buffer-hook #'magit-todos--kill-active-scan 'append 'local))
 
+
+(defun magit-todo--kill-buffer-and-process (process)
+  "Kill PROCESS and it's buffer when alive."
+  (when (and process
+               (process-live-p process))
+      (kill-process process)
+      (when-let* ((buffer (process-buffer process))
+                  (alive (buffer-live-p buffer)))
+        (kill-buffer buffer))))
+
 (defun magit-todos--kill-active-scan ()
-  "Kill `magit-todos-active-scan'.
+  "Kill any active scan process.
 To be called in status buffers' `kill-buffer-hook'."
-  (when (and magit-todos-active-scan
-             (process-live-p magit-todos-active-scan))
-    (kill-process magit-todos-active-scan)
-    (when-let* ((buffer (process-buffer magit-todos-active-scan))
-                (alive (buffer-live-p buffer)))
-      (kill-buffer buffer))))
+  (magit-todo--kill-buffer-and-process magit-todos-active-scan-process)
+  (magit-todo--kill-buffer-and-process magit-todos-branched-todos-git-diff-process))
 
 (defun magit-todos--add-to-custom-type (symbol value)
   "Add VALUE to the end of SYMBOL's `custom-type' property."
@@ -719,14 +728,10 @@ This function should be called from inside a ‘magit-status’ buffer."
   (when (or magit-todos-update-remote
             magit-todos-updating
             (not (file-remote-p default-directory)))
-    (when magit-todos-active-scan
+    (when magit-todos-active-scan-process
       ;; Avoid running multiple scans for a single magit-status buffer.
-      (let ((buffer (process-buffer magit-todos-active-scan)))
-        (when (process-live-p magit-todos-active-scan)
-          (delete-process magit-todos-active-scan))
-        (when (buffer-live-p buffer)
-          (kill-buffer buffer)))
-      (setq magit-todos-active-scan nil))
+      (magit-todo--kill-buffer-and-process magit-todos-active-scan-process)
+      (setq magit-todos-active-scan-process nil))
     (pcase magit-todos-update
       ((or 't                           ; Automatic
            ;; Manual and updating now
@@ -742,7 +747,7 @@ This function should be called from inside a ‘magit-status’ buffer."
        ;; HACK: I don't like setting a special var here, because it seems like lexically binding a
        ;; special var should follow down the chain, but it isn't working, so we'll do this.
        (setq magit-todos-updating t)
-       (setq magit-todos-active-scan (funcall magit-todos-scanner
+       (setq magit-todos-active-scan-process (funcall magit-todos-scanner
                                               :callback #'magit-todos--insert-items
                                               :magit-status-buffer (current-buffer)
                                               :directory default-directory
@@ -764,13 +769,16 @@ rescan."
     (if (or (eq 'rescan type)
             (and (not (eq 'cached type))
                  (null magit-todos-branch-item-cache)))
-        ;; TODO: Refactor to just return items and then insert separately.
-        (magit-todos--scan-with-git-diff
-         :magit-status-buffer (current-buffer)
-         :directory default-directory
-         :depth magit-todos-depth
-         :heading (format "TODOs (branched from %s)"
-                          (or magit-todos-branch-list-merge-base-ref (magit-main-branch))))
+        (progn
+          (magit-todo--kill-buffer-and-process magit-todos-branched-todos-git-diff-process)
+          ;; TODO: Refactor to just return items and then insert separately.
+          (setq magit-todos-branched-todos-git-diff-process
+                (magit-todos--scan-with-git-diff
+                 :magit-status-buffer (current-buffer)
+                 :directory default-directory
+                 :depth magit-todos-depth
+                 :heading (format "TODOs (branched from %s)"
+                                  (or magit-todos-branch-list-merge-base-ref (magit-main-branch))))))
       ;; Just insert cached items, if any.
       (let ((magit-todos-section-heading
              (format "TODOs (branched from %s)"
